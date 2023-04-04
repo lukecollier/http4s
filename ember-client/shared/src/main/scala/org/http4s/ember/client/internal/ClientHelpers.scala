@@ -34,8 +34,8 @@ import cats.syntax.all._
 import com.comcast.ip4s.Host
 import com.comcast.ip4s.Port
 import com.comcast.ip4s.SocketAddress
-import fs2.io.ClosedChannelException
 import fs2.io.net._
+import fs2.io.{ClosedChannelException => Fs2ClosedChannelException}
 import org.http4s._
 import org.http4s.client.RequestKey
 import org.http4s.client.middleware._
@@ -145,6 +145,13 @@ private[client] object ClientHelpers {
       }
     } yield RequestKeySocket(socket, requestKey)
 
+  class ClosedChannelException(cause: java.lang.Throwable) extends Fs2ClosedChannelException {
+    initCause(cause)
+
+    override def getMessage(): String =
+      "Remote Disconnect: Received zero bytes after sending request"
+  }
+
   def request[F[_]: Async](
       request: Request[F],
       connection: EmberConnection[F],
@@ -194,12 +201,7 @@ private[client] object ClientHelpers {
       res <- writeRead(processedReq)
     } yield res
   }.adaptError { case e: EmberException.EmptyStream =>
-    new ClosedChannelException() {
-      initCause(e)
-
-      override def getMessage(): String =
-        "Remote Disconnect: Received zero bytes after sending request"
-    }
+    new ClosedChannelException(e)
   }
 
   private[internal] def preprocessRequest[F[_]: Monad: Clock](
@@ -288,7 +290,7 @@ private[client] object ClientHelpers {
     def isRetryableError[F[_]](result: Either[Throwable, Response[F]]): Boolean =
       result match {
         case Right(_) => false
-        case Left(_: ClosedChannelException) => true
+        case Left(_: Fs2ClosedChannelException) => true
         case Left(ex: IOException) =>
           val msg = ex.getMessage()
           msg == "Connection reset by peer" || msg == "Broken pipe"
